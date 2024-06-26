@@ -5,4 +5,4 @@ Compilation using g++: g++ -O3 -o Cdc42Diffusion Cdc42Diffusion.cpp
 
 Command line arguments ./Cdc42Diffusion r_D D_D PriorParticleState.xyz
 
-Can get last frame of output xyz for use as riorParticleState.xyz using python script GetLastFrameXYZ_folder.py
+Can get last frame of output xyz for use as PriorParticleState.xyz using python script GetLastFrameXYZ_folder.py
