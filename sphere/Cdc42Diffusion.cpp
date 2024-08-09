@@ -17,6 +17,30 @@
  * Author: David Rutkowski (dmr518@lehigh.edu)
  */
 
+/* 
+   This code diffuses (diffuseParticle), reacts (lines 768-1134; 1475-1557),
+   and exerts the effects of instantaneous exo/endocytosis (lines 1225-1473)
+   on structs of type Particle restricted to the surface of a sphere. 
+   The simulations proceeds in discrete timesteps of dt or (for exo/endocytosis
+   or Particle addition to the surface) del_t. The simulation runs until finalTime
+   taking xyz snapshots every snapshotTime. 
+   If given as a command line argument, positionFileName (an xyz frame) can be used
+   to restart the simulation from a previous state rather  than initializing the
+   Particles to random positions on the sphere surface.
+   
+   Particle types refer to the following species:
+   0: Cdc42-GDP
+   1: Cdc42-GTP
+   2: Cdc42-GDP (cytoplasmic)
+   3: Scd2/1
+   4: Scd2/1 (cytoplasmic)
+   5: Scd2/1/Cdc42-GTP
+   6: sGAP
+   7: sGAP (cytoplasmic)
+   
+   This code was originally compiled with the C++17 standard using the GNU compiler.
+*/
+
 #include <math.h>
 #include <vector>
 #include <queue>
@@ -28,13 +52,7 @@
 #include <sstream>
 
 
-
-
-struct Coordinate2D
-{
-	double x,z;
-};
-
+// struct used to store 3D positions and vectors
 struct Coordinate
 {
 	double x, y, z;
@@ -129,7 +147,6 @@ struct Particle
 {
     Coordinate pos;
     int name;
-    //int type;
     double timeLastGlobalUpdate;
     double posTime;
     
@@ -246,20 +263,9 @@ int main(int argc, char** argv)
     
     double lambda_STT = 5.0;
     
-    //double D_D = 4E-4;
-    
-   // double r_D =  0.03; 
-    
-   // double r_T = 0.005;
-    
-    //double D_T = 4E-4;
-    
-    //double D_ST = D_T;
-    
     double D_D = 0.1;
     double D_T = 0.1;
     double D_ST = 0.0025;
-    
     
     double r_D =  0.17; 
     
@@ -296,45 +302,22 @@ int main(int argc, char** argv)
             }
         }
     }
-    
-    //double k_D = 100.0 / 3000.0;
-    
-   
-    
-    
-    
-    //cout << positionFileName << endl;
-    
-    
+
     if(r_D < r_T)
     {
         r_T = r_D;
     }
-    /*else
-    {
-        r_T = 0.015;
-    }*/
-	
-	//r_T = 0.0;
     
     
     if(D_D < D_T)
     {
         D_T = D_D;
     }
-    /*else
-    {
-        D_T = 0.1;
-    }*/
     
     if(D_T < D_ST)
     {
         D_ST = D_T;
     }
-    /*else
-    {
-        D_ST = 0.0025;
-    }*/
     
     
      // approximation of kD to keep N_gdp,internal constant
@@ -343,41 +326,30 @@ int main(int argc, char** argv)
     
     double D_S = 0.0025;
     
-    //double k_D = 100.0 / 3000.0;
     double k_S = 10.0 * ratio;
-
     
     
     double D_GAP = 1E-3;
     double k_GAP = 100.0 / 3000.0;
     double r_GAP = 1E-3;
     r_GAP = 0.0;
-   
-    
     
     double r_S = 0.1*RsRt_frac;
-    
 
     double exo_rate = 40.88014155/60.0;
     double endo_rate = 146.1504417/60.0;
     
 
-    double snapshotTimestep = 1.0 / 1000.0;
-    
-    
-    
+    double dt = 1.0 / 1000.0;
     
     
     double r_ST = 0.1*RsRt_frac;
-    
-
     
     int totalNumberScd2Scd1 = (int)(450*0.5);
 	
 	//https://en.cppreference.com/w/cpp/numeric/random/uniform_real_distribution
 	std::random_device rd;
     std::mt19937 gen(time(0));
-    //std::mt19937 gen(0);
     
     double pi = 3.14159265359;
 	double initialRadius = 1.8;
@@ -407,11 +379,6 @@ int main(int argc, char** argv)
     diffusionPrefactors[6] = diffusion_prefactorGAP;
     diffusionPrefactors[7] = -10.0;
     
-    /*diffusionPrefactors[0] = 0.0;
-    diffusionPrefactors[1] = 0.0;
-    diffusionPrefactors[3] = 0.0;
-    diffusionPrefactors[5] = 0.0;*/ 
-    
     
     // set number of particles on surface equal to steady state value without exo/endocytosis changing the number of particles on the surface
     int membraneNumberOfCdc42 = (int)(totalNumberOfCdc42 * 0.5);
@@ -425,35 +392,25 @@ int main(int argc, char** argv)
     int membraneNumberOfGAP = (int)(totalNumberGAP * 0.5);
     int cytoNumberOfGAP = totalNumberGAP - membraneNumberOfGAP;
     
-    //cout << totalNumberGAP << " " << membraneNumberOfGAP << " " << cytoNumberOfGAP << endl;
-    //exit(0);
-    
     if(cytoNumberOfCdc42 < 0)
     {
         cout << "Internal Number of particles is: " << cytoNumberOfCdc42 << ", exiting" << endl;
         exit(0);
     }
-    
 
     cout << membraneNumberOfCdc42 << " " << cytoNumberOfCdc42 << endl;
 	
     std::uniform_real_distribution<> dis(0.0, 1.0);
     std::normal_distribution<> gaussianDis1(0.0, 1.0);
-    
-    
-    
+
     std::vector <std::vector <struct Particle>> particles(maxNumTypes);
     
-    
-    bool readin_state = true;
-    
-    if(readin_state && positionFileName != "")
+	// initializing Particle positions either from a previous xyz frame (positionFileName)
+	// or randomly placing them on the sphere surface
+    if(positionFileName != "")
     {
-        //std::string positionFileName = "3dParamSetD_rD_0.10000-frame4999.xyz";
-        
         ifstream inputfile (positionFileName);
 
-        
         if (inputfile.is_open())
         {
             int linecount = 0;
@@ -486,7 +443,6 @@ int main(int argc, char** argv)
                     std::string timeString = tempString.substr(pos+1,tempString.length());
                     
                     double currSimTime = std::stod(timeString);
-                    //exit(0);
                 }
                 else if(linecount > 1)
                 {
@@ -606,16 +562,10 @@ int main(int argc, char** argv)
                     cout << "missing particle " << i << endl;
                 }
             }
-            //exit(0);
         }
     }
     else
-    {
-        /*std::vector <unsigned int> names(membraneNumberOfCdc42);
-        std::vector <int> types(membraneNumberOfCdc42);
-        std::vector <double> timesLastGlobalUpdate(membraneNumberOfCdc42);
-        std::vector <double> posTimes(membraneNumberOfCdc42);*/
-        
+    {        
         for(int i = 0; i < membraneNumberOfCdc42; i++)
         {
             double phiRnd = 2.0*pi*dis(gen);
@@ -640,8 +590,6 @@ int main(int argc, char** argv)
             
             Coordinate c = {initialRadius*cos(phiRnd)*sin(thetaRnd), initialRadius*sin(phiRnd)*sin(thetaRnd), initialRadius*cos(thetaRnd)};
             
-            //c = {0.0, 0.0, initialRadius};
-            
             particles[3].emplace_back(c, i+membraneNumberOfCdc42+cytoNumberOfCdc42, 0.0, 0.0);
         }
         
@@ -659,8 +607,6 @@ int main(int argc, char** argv)
             
             Coordinate c = {initialRadius*cos(phiRnd)*sin(thetaRnd), initialRadius*sin(phiRnd)*sin(thetaRnd), initialRadius*cos(thetaRnd)};
             
-            //c = {0.0, 0.0, initialRadius};
-            
             particles[6].emplace_back(c, i+membraneNumberOfCdc42+cytoNumberOfCdc42+membraneNumberOfScd2Scd1+cytoNumberOfScd2Scd1, 0.0, 0.0);
         }
         for(int i = 0; i < cytoNumberOfGAP; i++)
@@ -670,18 +616,9 @@ int main(int argc, char** argv)
             particles[7].emplace_back(c, i+membraneNumberOfCdc42+cytoNumberOfCdc42+membraneNumberOfScd2Scd1+cytoNumberOfScd2Scd1+membraneNumberOfGAP, 0.0, 0.0);
         }
     }
-        
-    /*std::queue <unsigned int> recycledNames;
-    for(int j = 0; j < cytoNumberOfCdc42; j++)
-    {
-        recycledNames.push(j + membraneNumberOfCdc42);
-    }
-    
-    unsigned int namesMax = membraneNumberOfCdc42 + cytoNumberOfCdc42;*/
 	
 	double currTime = 0.0;
 	double finalTime = 5000.0;
-    //double currPosTime = 0.0;
 	
     std::ostringstream out;
     out.precision(5);
@@ -699,11 +636,7 @@ int main(int argc, char** argv)
     out4.precision(5);
     out4 << std::fixed << r_T;
     
-	//std::string appendString = "density_kon_" + out.str() + "_r_D_" + out2.str() + "_D_" + out3.str() + "_endo-rate_" + out4.str();
 	std::string appendString = "_rD_" + out.str() + "_DD_" + out2.str() + "_Run3";
-    
-	
-	//double del_t = finalTime;
 
 	double nextSnapshotTime = 0.0;
 	
@@ -761,23 +694,19 @@ int main(int argc, char** argv)
 
     double kapa = 1.0; 
     
-    //exo_rate = 0.0;
-    //endo_rate = 0.0;
-    
     rates[0] = exo_rate;
     rates[1] = endo_rate;
     
     
     double alpha = 0.5;
     
-    int frameModValue = (int)(10.0 / snapshotTimestep);
+	double snapshotTime = 10.0;
+    int frameModValue = (int)(snapshotTime / dt);
     
+	//main simulation loop
     //currTime is the current system time at all times, currPosTime is the time at which the current position of the particles is at
-
 	while(currTime < finalTime)
 	{	
-		//rates[1] = 254.5227 / 60.0;
-        
         // assumes that all internal particles are GDP, not GTP
 		rates[2] = k_D * particles[2].size();
         rates[3] = k_S * particles[4].size();
@@ -838,10 +767,8 @@ int main(int argc, char** argv)
             
             for(int i = 0; i < particles.size(); i++)
             {
-                //cout << i << endl;
                 for(int p = particles[i].size()-1; p > -1; p--)
                 {
-
                     if(i == 0)
                     {
                         // conversion between GDP and GTP via Scd1Scd2
@@ -857,7 +784,6 @@ int main(int argc, char** argv)
                             {
                                 //lambda parameter for Doi method
                                 double lambda_SD = 5.3;
-                                //double probability = lambda*(nextSnapshotTime - particles[i][p].timeLastGlobalUpdate);
                                 double probability = 1.0 - exp(-lambda_SD * (nextSnapshotTime - particles[i][p].timeLastGlobalUpdate));
                                 
                                 double randVal = dis(gen);
@@ -886,8 +812,6 @@ int main(int argc, char** argv)
                                 if(tempArcLength < 0.05)
                                 {
                                     //lambda parameter for Doi method
-                                    //double lambda_STT = 20.0;
-                                    //double probability = lambda*(nextSnapshotTime - particles[i][p].timeLastGlobalUpdate);
                                     double probability = 1.0 - exp(-lambda_STT * (nextSnapshotTime - particles[i][p].timeLastGlobalUpdate));
                                     
                                     double randVal = dis(gen);
@@ -941,16 +865,12 @@ int main(int argc, char** argv)
                                 {
                                     //lambda parameter for Doi method
                                     double lambda_GAP = 0.1*100.0;
-                                    //double probability = lambda*(nextSnapshotTime - particles[i][p].timeLastGlobalUpdate);
                                     double probability = 1.0 - exp(-lambda_GAP * (nextSnapshotTime - particles[i][p].timeLastGlobalUpdate));
                                     
                                     double randVal = dis(gen);
                                     
                                     if(randVal < probability)
                                     {
-                                        //cout << "hydrolosis by discrete GAP" << endl;
-                                         // switch this particle from GTP to GDP
-                                         // was this wrong in prior versions!!!?
                                         Particle tempParticle = particles[1][p];
                                         particles[1][p] = particles[1].back();
                                         particles[1].pop_back();
@@ -976,8 +896,6 @@ int main(int argc, char** argv)
                             if(tempArcLength < 0.05)
                             {
                                 //lambda parameter for Doi method and Ramierez
-                                //double lambda_ST = 9.6;
-                                //double probability = lambda*(nextSnapshotTime - particles[i][p].timeLastGlobalUpdate);
                                 double probability = 1.0 - exp(-lambda_ST * (nextSnapshotTime - particles[i][p].timeLastGlobalUpdate));
                                 
                                 double randVal = dis(gen);
@@ -1017,38 +935,28 @@ int main(int argc, char** argv)
                         
                         for(int k = particles[1].size()-1; k > -1; k--)
                         {
-                            //double tempArcLength = calcArcLengthDistance(pos_i, particles[1][k].pos, initialRadius);
-                            
-                            //if(tempArcLength < 0.05)
-                            {
-                                //lambda parameter for Doi method and Ramierez
-                                //double lambda = 256.0;
-                                //double probability = lambda*(nextSnapshotTime - particles[i][p].timeLastGlobalUpdate);
-                                //double probability = 1.0 - exp(-lambda * (nextSnapshotTime - particles[i][p].timeLastGlobalUpdate));
-                                
-                                double randVal = dis(gen);
-                                
-                                double currProb = 1.0 - exp(-k_ST * (nextSnapshotTime - particles[i][p].timeLastGlobalUpdate));
-                            
-                                if(randVal < currProb)
-                                {
-                                    countScd1Reaction++;
-                                    // switch Scd1Scd2 and GTP to Scd1Scd2GTP compound
-                                    
-                                    Particle tempParticle = particles[1][k];
-                                    tempParticle.secondname = particles[4][p].name;
-                                    
-                                    particles[4][p] = particles[4].back();
-                                    particles[4].pop_back();
-                                    
-                                    particles[1][k] = particles[1].back();
-                                    particles[1].pop_back();
-                                    
-                                    particles[5].push_back(tempParticle);
-                                    
-                                    break;
-                                }
-                            }
+							double randVal = dis(gen);
+							
+							double currProb = 1.0 - exp(-k_ST * (nextSnapshotTime - particles[i][p].timeLastGlobalUpdate));
+						
+							if(randVal < currProb)
+							{
+								countScd1Reaction++;
+								// switch Scd1Scd2 and GTP to Scd1Scd2GTP compound
+								
+								Particle tempParticle = particles[1][k];
+								tempParticle.secondname = particles[4][p].name;
+								
+								particles[4][p] = particles[4].back();
+								particles[4].pop_back();
+								
+								particles[1][k] = particles[1].back();
+								particles[1].pop_back();
+								
+								particles[5].push_back(tempParticle);
+								
+								break;
+							}
                         }
                     }
                     else if(i == 5)
@@ -1064,16 +972,12 @@ int main(int argc, char** argv)
                             particles[i][p] = particles[i].back();
                             particles[i].pop_back();
                             
-                            
-                            //cout << initialParticle.name << " " << initialParticle.secondname << endl;
                             // unbind two particles at 0.055 um apart
                             double unbinding_rad = 0.055;
                             // hankbesser on github
                             double theta = unbinding_rad *0.5 / initialRadius;
                             double phi = 2.0*pi*dis(gen);
                             
-                            
-                            //cout << pos[p].z / initialRadius << " " << pos[p].y << " " << pos[p].x << endl;
                             double initialTheta = acos(initialParticle.pos.z / initialRadius);
                             double initialPhi = atan2(initialParticle.pos.y, initialParticle.pos.x);
                     
@@ -1105,20 +1009,9 @@ int main(int argc, char** argv)
                             final_pos3D = final_pos3D*cos(initialPhi) + currCrossProduct*sin(initialPhi) + rotK*currDotProduct*(1.0 - cos(initialPhi));
                             
                             particles[3].emplace_back(final_pos3D, initialParticle.secondname, initialParticle.timeLastGlobalUpdate, initialParticle.posTime);
-        
-                            
-                            /*tempParticle.pos.x = final_pos3D.x;
-                            tempParticle.pos.y = final_pos3D.y;
-                            tempParticle.pos.z = final_pos3D.z;
-                            
-                            particles[3].push_back(tempParticle);*/
                             
                             
                             theta = -theta;
-                            
-                            //cout << pos[q].z / initialRadius << " " << pos[q].y << " " << pos[q].x << endl;
-                            //initialTheta = acos(initialParticle.pos.z / initialRadius);
-                            //initialPhi = atan2(initialParticle.pos.y, initialParticle.pos.x);
                     
                             // this is rotated position assuming that the particle started at the north pole (0,0,initialradius)
                             final_pos3D.x = initialRadius*cos(phi)*sin(theta);
@@ -1145,25 +1038,14 @@ int main(int argc, char** argv)
                             
                             final_pos3D = final_pos3D*cos(initialPhi) + currCrossProduct*sin(initialPhi) + rotK*currDotProduct*(1.0 - cos(initialPhi));
                             
-                            /*tempParticle.pos.x = final_pos3D.x;
-                            tempParticle.pos.y = final_pos3D.y;
-                            tempParticle.pos.z = final_pos3D.z;
-                            
-                            tempParticle.name = 
-                            
-                            particles[1].push_back(tempParticle);*/
-                            
                             particles[1].emplace_back(final_pos3D, initialParticle.name, initialParticle.timeLastGlobalUpdate, initialParticle.posTime);
                         }
                     }
                 }
             }
             
-            //cout << countScd1InCyto << " " << countScd1Reaction << " " << countCdc42GTP << endl;
-            
             for(int i = 0; i < particles.size(); i++)
             {
-                //cout << "two " << i << endl;
                 for(int p = particles[i].size()-1; p > -1; p--)
                 {
                     bool removedParticle = false;
@@ -1184,7 +1066,6 @@ int main(int argc, char** argv)
                             particles[2].push_back(tempParticle);
                                     
                             cytoNumberOfCdc42 += 1;
-                            //countEvents[3] += 1;
                             removedParticle = true;
                         }
                     }
@@ -1203,7 +1084,6 @@ int main(int argc, char** argv)
                             particles[2].push_back(tempParticle);
                                     
                             cytoNumberOfCdc42 += 1;
-                            //countEvents[3] += 1;
                             removedParticle = true;
                         }
                     }
@@ -1241,9 +1121,7 @@ int main(int argc, char** argv)
                             particles[i].pop_back();
                             
                             particles[7].push_back(tempParticle);
-                                    
-                            //cytoNumberOfCdc42 += 1;
-                            //countEvents[3] += 1;
+                            
                             removedParticle = true;
                         }
                     }
@@ -1287,17 +1165,13 @@ int main(int argc, char** argv)
                 xyzFile << 10 << " " << -1 << " " << 0.0 << " " << 0.0 << " " << 0.0 << endl;
                 
                 numEachStateFile << endl;
-
-                //xyzFile << 1 << " " << 0.0 << " " << 0.0 << " " << 0.0 << endl;
-                //xyzFile << 2 << " " << 0.0 << " " << 0.0 << " " << initialRadius << endl;
-                //xyzFile << 3 << " " << 0.0 << " " << 0.0 << " " << -initialRadius << endl;
             }
             
             // update del_t to account for time particles diffused in this global update
             del_t = del_t - (nextSnapshotTime - currTime);
             
             currTime = nextSnapshotTime;
-            nextSnapshotTime += snapshotTimestep;
+            nextSnapshotTime += dt;
             
             if(tempOccupancyBack > 0)
             {
@@ -1322,7 +1196,7 @@ int main(int argc, char** argv)
 		}
         
         
-        //only really need to update all particles if the event type is exo or endocytosis
+        //only need to update all particles if the event type is exo or endocytosis
 		//update position of particles (diffusion)
         if(eventIndex <= 1)
         {
@@ -1354,17 +1228,6 @@ int main(int argc, char** argv)
 			double exclusionRadius = exo_surface_radius;
             
             double radiusRatio = exo_radius / initialRadius;
-            
-            /*int n_exo = (int)round(kon / (koff + kon) * totalNumberOfParticles * (radiusRatio*radiusRatio));
-
-            if(n_exo > cytoNumberOfCdc42)
-            {
-                cout << "n_exo: " << n_exo << ", internal #: " << cytoNumberOfCdc42 << endl;
-                // if n_exo is greater than internal number of particles then just add everything from inside
-                n_exo = cytoNumberOfCdc42;
-            }*/
-            
-            
 			
             double phiRnd, thetaRnd;
             Coordinate c;
@@ -1373,9 +1236,6 @@ int main(int argc, char** argv)
             double sigma_distribution = 0.01;
             double inv_sigma_distribution = 1.0 / sigma_distribution;
             double inv_sigma_distribution_sq = inv_sigma_distribution*inv_sigma_distribution;
-            
-            //cout << "exocytosis attempt" << endl;
-            //int attemptCount = 0;
             
             if(particles[1].size() > 0.0)
             {
@@ -1404,9 +1264,6 @@ int main(int argc, char** argv)
                     
                     randomUniform = dis(gen);
                     
-                    //cout << "exo attempt count: " << attemptCount << " " << prob_value << endl;
-                    //attemptCount++;
-                    
                     if(prob_value >= 1.0)
                         cout << prob_value << " " << randomUniform << endl;
                 }
@@ -1422,41 +1279,6 @@ int main(int argc, char** argv)
             
             
 			exclusionCenter = c;
-            
-            // need to find max Cdc42-GTP concentration point and rotate exclusionCenter based around this point (north pole -> max Cdc42-GTP point)
-            /*int randomIndex = (int)(dis(gen)*particles[1].size());
-            
-            struct Coordinate exclusionCenter = particles[1][randomIndex].pos;*/
-            
-            /*double initialTheta = acos(maxCdc42Pos.z / initialRadius);
-            double initialPhi = atan2(maxCdc42Pos.y, maxCdc42Pos.x);
-            initialPhi = 0.0;
-            
-            struct Coordinate rotK;
-            rotK.x = 0.0;
-            rotK.y = 1.0;
-            rotK.z = 0.0;
-            
-            // rotate by initialTheta            
-            double currDotProduct = rotK*exclusionCenter;
-            struct Coordinate currCrossProduct = rotK.crossProduct(exclusionCenter);
-            
-            exclusionCenter = exclusionCenter*cos(initialTheta) + currCrossProduct*sin(initialTheta) + rotK*currDotProduct*(1.0 - cos(initialTheta));
-            
-            rotK.x = 0.0;
-            rotK.y = 0.0;
-            rotK.z = 1.0;
-            
-            // rotate by initialPhi
-            currDotProduct = rotK*exclusionCenter;
-            currCrossProduct = rotK.crossProduct(exclusionCenter);
-            
-            exclusionCenter = exclusionCenter*cos(initialPhi) + currCrossProduct*sin(initialPhi) + rotK*currDotProduct*(1.0 - cos(initialPhi));
-            
-            //exclusionCenter = {0.0, 0.0, -initialRadius};*/
-            
-            
-            
             
             exoPositionsFile << exclusionCenter.x << " " << exclusionCenter.y << " " << exclusionCenter.z << endl;
 			
@@ -1485,16 +1307,6 @@ int main(int argc, char** argv)
                             
                             if(var_l < var_l_exo_compare)
                             {
-                                /*particles[p] = particles.back();
-                                particles.pop_back();
-                                
-                                recycledNames.push(names[p]);
-                                
-                                names[p] = names.back();
-                                names.pop_back();
-                                
-                                cytoNumberOfCdc42 += 1;*/
-
                                 Coordinate v2 = particles[i][p].pos - exclusionCenter;
                                 
                                 // projection of v2 onto refrence plane with normal vector v1
@@ -1504,24 +1316,16 @@ int main(int argc, char** argv)
                                 
                                 // angle made between exclusion center and final position
                                 // kapa is how steep the dropoff of the push is (should go to zero if var_l = exo_surface_cutoff
-                                // temp_exclusion_radius is additional distance away from the exocytotic center that the particle should move
-                                //double var_t = (exclusionRadius) / initialRadius;
-                                //double var_t = (exclusionRadius + var_l) / initialRadius;
-                                /*double gamma = (1.0 / (var_l + kapa) - 1.0 / (exo_surface_cutoff + kapa)) / (1.0/kapa - 1.0 / (exo_surface_cutoff + kapa));
-                                double temp_exclusion_radius = exclusionRadius * gamma;
-                                double var_t = (temp_exclusion_radius + var_l) / initialRadius;*/
-                                
+                                // temp_exclusion_radius is additional distance away from the exocytotic center that the particle should move                                
                                 double RSphereNew = sqrt(initialRadius*initialRadius + area_per_vesicle_exo / (4.0 * pi));
                                 
                                 double acosParameter = 1.0 - initialRadius*initialRadius / (RSphereNew*RSphereNew) * (1.0 - cos(var_l / initialRadius)) - area_per_vesicle_exo / (2.0 * pi * RSphereNew*RSphereNew * alpha);
                                 if(acosParameter < -1.0)
                                 {
-                                   // cout << "acosParameter < 0.0: " << acosParameter << endl;
                                     acosParameter = -1.0;
                                 }
                                 else if(acosParameter > 1.0)
                                 {
-                                    //cout << "acosParameter > pi: " << acosParameter << endl;
                                     acosParameter = 1.0;
                                 }
                                 
@@ -1532,80 +1336,20 @@ int main(int argc, char** argv)
                                     var_t = pi;
                                 
                                 Coordinate finalPos = initialRadius*cos(var_t)*v1 + initialRadius*sin(var_t)*v2;
-                                
-                                //cout << var_l << " " << var_l+delR << endl;
+
                                 particles[i][p].pos = finalPos;
                             }
                         }
                     }
                 }
             }
-            
-            
-            
-            /*double maxTheta = exclusionRadius / initialRadius;
-            double minRandom = cos(maxTheta);
-            
-            double initialTheta = acos(exclusionCenter.z / initialRadius);
-            double initialPhi = atan2(exclusionCenter.y, exclusionCenter.x);
-            // add n_exo particles to surface
-			for(int p = 0; p < n_exo; p++)
-            {
-                // start based on north pole and then rotate into exclusion center
-                
-                double temp_phiRnd = 2.0*pi*dis(gen);
-                double temp_thetaRnd = acos((1.0 - minRandom)*dis(gen) + minRandom);
-                
-                Coordinate final_pos3D = {initialRadius*cos(temp_phiRnd)*sin(temp_thetaRnd), initialRadius*sin(temp_phiRnd)*sin(temp_thetaRnd), initialRadius*cos(temp_thetaRnd)};
-
-                // rotate onto exclusion center point
-                
-                struct Coordinate rotK;
-                rotK.x = 0.0;
-                rotK.y = 1.0;
-                rotK.z = 0.0;
-                
-                
-                // rotate by initialTheta
-                double currDotProduct = rotK*final_pos3D;
-                struct Coordinate currCrossProduct = rotK.crossProduct(final_pos3D);
-                
-                final_pos3D = final_pos3D*cos(initialTheta) + currCrossProduct*sin(initialTheta) + rotK*currDotProduct*(1.0 - cos(initialTheta));
-                
-                rotK.x = 0.0;
-                rotK.y = 0.0;
-                rotK.z = 1.0;
-                
-                // rotate by initialPhi
-                currDotProduct = rotK*final_pos3D;
-                currCrossProduct = rotK.crossProduct(final_pos3D);
-                
-                final_pos3D = final_pos3D*cos(initialPhi) + currCrossProduct*sin(initialPhi) + rotK*currDotProduct*(1.0 - cos(initialPhi));
-                
-                pos.push_back(final_pos3D);
-                
-                if(recycledNames.size() > 0)
-                {
-                    names.push_back(recycledNames.front());
-                    recycledNames.pop();
-                }
-                else
-                {
-                    cout << "Error, ran out of recycled names: " << namesMax << endl;
-                    exit(0);
-                }
-            }
-            
-            cytoNumberOfCdc42 -= n_exo;*/
-            
+			
 			countEvents[0] += 1;
 		}
 		else if(eventIndex == 1)
 		{
 			//endocytosis
 			double inclusionRadius = endo_surface_radius;
-			
-            
             
             double phiRnd, thetaRnd;
             Coordinate c;
@@ -1658,41 +1402,6 @@ int main(int argc, char** argv)
             
 			Coordinate inclusionCenter = c;
             
-       
-            
-			//Coordinate inclusionCenter = {initialRadius*cos(phiRnd)*sin(thetaRnd), initialRadius*sin(phiRnd)*sin(thetaRnd), initialRadius*cos(thetaRnd)};
-            
-            // need to find max Cdc42-GTP concentration point and rotate exclusionCenter based around this point (north pole -> max Cdc42-GTP point)
-            /*int randomIndex = (int)(dis(gen)*particles[1].size());
-            
-            inclusionCenter = particles[1][randomIndex].pos;*/
-            
-            /*double initialTheta = acos(maxCdc42Pos.z / initialRadius);
-            double initialPhi = atan2(maxCdc42Pos.y, maxCdc42Pos.x);
-            
-            struct Coordinate rotK;
-            rotK.x = 0.0;
-            rotK.y = 1.0;
-            rotK.z = 0.0;
-            
-            // rotate by initialTheta            
-            double currDotProduct = rotK*inclusionCenter;
-            struct Coordinate currCrossProduct = rotK.crossProduct(inclusionCenter);
-            
-            inclusionCenter = inclusionCenter*cos(initialTheta) + currCrossProduct*sin(initialTheta) + rotK*currDotProduct*(1.0 - cos(initialTheta));
-            
-            rotK.x = 0.0;
-            rotK.y = 0.0;
-            rotK.z = 1.0;
-            
-            // rotate by initialPhi
-            currDotProduct = rotK*inclusionCenter;
-            currCrossProduct = rotK.crossProduct(inclusionCenter);
-            
-            inclusionCenter = inclusionCenter*cos(initialPhi) + currCrossProduct*sin(initialPhi) + rotK*currDotProduct*(1.0 - cos(initialPhi));
-            //inclusionCenter = {0.0, 0.0, -initialRadius};*/
-            
-            
             endoPositionsFile << inclusionCenter.x << " " << inclusionCenter.y << " " << inclusionCenter.z << endl;
 			
 			Coordinate v1 = inclusionCenter.getUnitCoord();
@@ -1721,18 +1430,8 @@ int main(int argc, char** argv)
                             if(var_l < inclusionRadius)
                             {
                                 particles[i][p].pos = inclusionCenter;
-                                /*particles[p] = particles.back();
-                                particles.pop_back();
-                                
-                                recycledNames.push(names[p]);
-                                
-                                names[p] = names.back();
-                                names.pop_back();
-                                
-                                proteinRemoveCount++;*/
                             }
                             else if(var_l < var_l_endo_compare)
-                            //else
                             {
                                 Coordinate v2 = particles[i][p].pos - inclusionCenter;
                                 
@@ -1741,22 +1440,16 @@ int main(int argc, char** argv)
                                 v2 = v2.getUnitCoord();
                                 
                                 // angle made between exclusion center and final position
-                                //double var_t = (var_l - inclusionRadius) / initialRadius;
-                               /* double gamma = (1.0 / (var_l - inclusionRadius + kapa) - 1.0 / (endo_surface_cutoff - inclusionRadius + kapa)) / (1.0/kapa - 1.0 / (endo_surface_cutoff - inclusionRadius + kapa));
-                                double temp_inclusion_radius = inclusionRadius * gamma;
-                                double var_t = (var_l - temp_inclusion_radius) / initialRadius;*/
                                 
                                 double RSphereNew = sqrt(initialRadius*initialRadius - area_per_vesicle_endo / (4.0 * pi));
                                 
                                 double acosParameter = 1.0 - initialRadius*initialRadius / (RSphereNew*RSphereNew) * (1.0 - cos(var_l / initialRadius)) + area_per_vesicle_endo / (2.0 * pi * RSphereNew*RSphereNew * alpha);
                                 if(acosParameter < -1.0)
                                 {
-                                   // cout << "acosParameter < 0.0: " << acosParameter << endl;
                                     acosParameter = -1.0;
                                 }
                                 else if(acosParameter > 1.0)
                                 {
-                                    //cout << "acosParameter > pi: " << acosParameter << endl;
                                     acosParameter = 1.0;
                                 }
                                 
@@ -1781,7 +1474,6 @@ int main(int argc, char** argv)
 		
 		else if(eventIndex == 2)
 		{
-            //cout << "Cdc42 " << particles[2].size()  << endl;
 			//Cdc42 proteinAdd
 			double phiRnd = 2.0*pi*dis(gen);
 			double thetaRnd = acos(2*dis(gen)-1);
@@ -1809,13 +1501,11 @@ int main(int argc, char** argv)
 		}
         else if(eventIndex == 3)
         {
-            //cout << "Scd1Scd2 " << particles[4].size()  << endl;
             //Scd1Scd2 proteinAdd
 			double phiRnd = 2.0*pi*dis(gen);
 			double thetaRnd = acos(2*dis(gen)-1);
 			
 			Coordinate c = {initialRadius*cos(phiRnd)*sin(thetaRnd), initialRadius*sin(phiRnd)*sin(thetaRnd), initialRadius*cos(thetaRnd)};
-            //c = {0.0, 0.0, initialRadius};
             
             if(particles[4].size() >= 1)
             {
@@ -1839,13 +1529,11 @@ int main(int argc, char** argv)
         }
         else if(eventIndex == 4)
         {
-            //cout << "GAP add: " << particles[7].size() << " " << particles[6].size() << endl;
             //GAP proteinAdd
 			double phiRnd = 2.0*pi*dis(gen);
 			double thetaRnd = acos(2*dis(gen)-1);
 			
 			Coordinate c = {initialRadius*cos(phiRnd)*sin(thetaRnd), initialRadius*sin(phiRnd)*sin(thetaRnd), initialRadius*cos(thetaRnd)};
-            //c = {0.0, 0.0, initialRadius};
             
             if(particles[7].size() >= 1)
             {
@@ -1867,29 +1555,7 @@ int main(int argc, char** argv)
                 countEvents[4] += 1;
             }
         }
-        
-		/*else if(eventIndex == 3)
-		{
-			//proteinRemove
-			int randInt = (int)(particles.size() * dis(gen));
-			//randMembraneProtein = random.randint(0, len(particles)-1);
-			int randMembraneProtein = randInt;
-			
-			particles[randMembraneProtein] = particles.back();
-			particles.pop_back();
-            
-            recycledNames.push(names[randMembraneProtein]);
-            
-            names[randMembraneProtein] = names.back();
-            names.pop_back();
-            
-            types[randMembraneProtein] = types.back();
-            types.pop_back();
-					
-			cytoNumberOfCdc42 += 1;
-			countEvents[3] += 1;
-		}*/
-        
+		
         currTime = currTime + del_t;
 	}
 	
@@ -1902,11 +1568,4 @@ int main(int argc, char** argv)
     exoPositionsFile.close();
     endoPositionsFile.close();
     numEachStateFile.close();
-    
-	//cout<<"Total runtime (s): " << seconds<<endl;
-	
-	/*for(int i = 0; i < countEvents.size(); i++)
-	{
-		cout << i << " " << countEvents[i] << endl;
-	}*/
 }
