@@ -6,3 +6,5 @@ Compilation (originally using C++17 standard) using g++: g++ -O3 -o Cdc42Diffusi
 Command line arguments ./Cdc42Diffusion r_D D_D PriorParticleState.xyz
 
 Can get last frame of output xyz for use as PriorParticleState.xyz using python script GetLastFrameXYZ_folder.py
+
+Visualization of the xyz files can be done with the program Ovito using the attached Ovito state files. These state files will initially attempt to load a specific xyz, but after loading the state file, the correct xyz can be loaded.
