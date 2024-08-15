@@ -39,7 +39,7 @@
    6: sGAP
    7: sGAP (cytoplasmic)
    
-   This code was originally compiled with the C++17 standard using the GNU compiler.
+   This code was compiled with the C++17 standard using the GNU compiler.
 */
 
 #include <math.h>
@@ -52,6 +52,7 @@
 #include <time.h>
 #include <sstream>
 
+const double pi = 3.14159265359;
 
 // struct used to store 3D positions and vectors
 struct Coordinate
@@ -250,7 +251,6 @@ using namespace std;
     
 int main(int argc, char** argv)
 {
-    double pi = 3.14159265359;
     double initialRadius = 1.8;
     
     //Table S2 Parameters
@@ -378,7 +378,7 @@ int main(int argc, char** argv)
     double diffusion_prefactorScd1Scd2GTP = sqrt(2.0 * D_ST);
     double diffusion_prefactorGAP = sqrt(2.0 * D_GAP);
     
-    int maxNumTypes = 9;
+    int maxNumTypes = 8;
     
     //vector of diffusion prefactors for different components to use in diffuseParticle function
     //-10.0 indicates a particle that is cytoplasmic and does not explicitly diffuse
