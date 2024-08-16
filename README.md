@@ -7,6 +7,8 @@ Expected compilation time on a typical Desktop computer is on the order of a min
 
 Command line arguments ./Cdc42Diffusion r_D D_D PriorParticleState.xyz
 
+Output from code includes an xyz file of particle positions every snapshotTime (default of 10 s), positions of exo/endocytosis events, number of particles of each state, and ratio of particles in the tip region of the sphere/spherocylinder shape (z >= 0.0) to the particles in the rest of the shape.
+
 Can get last frame of output xyz for use as PriorParticleState.xyz using python script GetLastFrameXYZ_folder.py
 
 Sphere version of the code is included in the sphere folder.
